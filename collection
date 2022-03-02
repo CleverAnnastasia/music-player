@@ -1,0 +1,60 @@
+const app = getApp().globalData
+var apiUrl = app.apiUrl +"api/getCollectionList";
+const api = require('../../utils/api.js')
+const song = require('../../utils/song.js')
+
+Page({
+  onLoad: function () {
+    this._getTopMusicList()
+  },
+  _getTopMusicList: function () {
+    const _that = this
+    wx.request({
+      url: apiUrl+"?userId="+app.userId,
+      data: {
+      
+      },
+      success: function (res) {
+        if (res.data.success) {
+          console.log(res.data.data);
+          _that.setData({
+            topList: res.data.data.songList,
+            title: res.data.data.name,
+            pic: res.data.data.pic,
+          })
+        }
+      }
+    })
+
+
+
+
+
+
+
+
+
+
+
+  },
+  _normalizeSongs:function(list) {
+    let ret = []
+    list.forEach((item) => {
+      const musicData = item.data
+      if (musicData.songid && musicData.albummid) {
+        ret.push(song.createSong(musicData))
+      }
+    })
+    return ret
+  }
+})
+{
+  "usingComponents": {
+    "loading": "../components/loading/loading",
+    "collection-list": "../components/collection-list/collection-list"
+  }
+}
+<view>
+  <collection-list title="{{title}}" image="{{pic}}" songs="{{topList}}"></collection-list>
+</view>
+/* pages/collection/collection.wxss */
