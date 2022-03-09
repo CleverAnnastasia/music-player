@@ -1,0 +1,1230 @@
+const app = getApp().globalData
+const song = require('../../utils/song.js')
+const Lyric = require('../../utils/lyric.js')
+const util = require('../../utils/util.js')
+var apiUrl = app.apiUrl +"api/getMusic";
+var favoriteUrl= app.apiUrl +"api/favorite";
+var saveCommentUrl= app.apiUrl +"api/saveComment";
+var getCommentUrl= app.apiUrl +"api/getComment";
+const SEQUENCE_MODE = 1
+const RANDOM_MOD = 2
+const SINGLE_CYCLE_MOD = 3 
+
+Page({
+  data: {
+    playurl: '',
+    favorite:false,
+    playIcon: 'icon-play',
+    cdCls: 'pause',
+    currentLyric: null,
+    currentLineNum: 0,
+    toLineNum: -1,
+    name:"",
+    currentSong: null,
+    url:"",
+    commentList:[],
+    context:"",
+    dotsArray: new Array(2),
+    currentDot: 0,
+    playMod: SEQUENCE_MODE,
+    uid: '',
+    image:"",
+    currentText:"sdhfgdghfdshgfdsgfds",
+    mark:""
+  },
+
+  onShow: function (options) {
+    if(app.type == 1){
+      this._init()
+      this.setData({
+        uid: this.getUid()
+      })
+    }
+    
+    app.type = 0;
+  },
+
+  //初始化
+  _init: function () {
+    let songslist = (app.songlist.length && app.songlist) || wx.getStorageSync('songlist')
+    let currentSong = app.songlist[app.currentIndex] || (songslist && songslist[app.currentIndex])
+    console.log(songslist);
+    let duration = currentSong.duration
+
+
+    this.setData({
+      currentSong: currentSong,
+      duration: this._formatTime(duration),
+      songslist: songslist,
+      currentIndex: app.currentIndex
+    })
+    console.log("songId====="+currentSong.songId);
+    this._getPlayUrl(currentSong.songId)
+    //this._getLyric(currentSong)
+  },
+
+  // 获取背景播放音乐的songmidid
+  _getBackPlayfileName: function () {
+    return new Promise((resolve, reject) => {
+      wx.getBackgroundAudioPlayerState({
+        success: function (res) {
+          var dataUrl = res.dataUrl
+          let ret = dataUrl && dataUrl.split('?')[0].split('/')[3]
+          resolve({ret, res})
+        },
+        fail: function (e) {
+          let ret = false
+          reject(ret)
+        }
+      })
+    })
+  },
+
+  // 获取播放地址
+  _getPlayUrl: function (songmidid) {
+    const _this = this
+    wx.request({
+      url: apiUrl+"?songId="+songmidid+"&userId="+app.userId,
+      method: 'get',
+      success: function (res,statusCode,header,cookies,profile) {
+        if (res.data.data.url) {
+          _this.setData({
+            image:res.data.data.pic,
+            mark:res.data.data.mark,
+            favorite:res.data.data.checked,
+            url:res.data.data.url,
+         
+          })  
+          getComment(_this);
+
+          _this._createAudio(res.data.data.url)
+        } else {
+          wx.showToast({
+            title: '本歌曲暂时不能播放。请切换下一首',
+            icon: 'none'
+          })
+          _this._createAudio(res.data.req_0.data.sip[0] + res.data.req_0.data.midurlinfo[0].filename)
+        }
+      }
+    })
+  },
+
+  getUid () {
+    let _uid = JSON.parse(JSON.stringify(this.data.uid))
+    if (_uid) {
+      return _uid
+    }
+    if (!_uid) {
+      const t = (new Date()).getUTCMilliseconds()
+      _uid = '' + Math.round(2147483647 * Math.random()) * t % 1e10
+    }
+    return _uid
+  },
+
+  // 创建播放器
+  _createAudio: function (playUrl) {
+    wx.playBackgroundAudio({
+      dataUrl: playUrl,
+      title: this.data.currentSong.name,
+      coverImgUrl: this.data.currentSong.image
+    })
+    // 监听音乐播放。
+    wx.onBackgroundAudioPlay(() => {
+      this.setData({
+        playIcon: 'icon-pause',
+        cdCls: 'play'
+      })
+    })
+    // 监听音乐暂停。
+    wx.onBackgroundAudioPause(() => {
+      this.setData({
+        playIcon: 'icon-play',
+        cdCls: 'pause'
+      })
+    })
+    // 监听音乐停止。
+    wx.onBackgroundAudioStop(() => {
+      if (this.data.playMod === SINGLE_CYCLE_MOD) {
+        this._init()
+        return
+      }
+      this.next()
+    })
+    // 监听播放拿取播放进度
+    const manage = wx.getBackgroundAudioManager()
+    manage.onTimeUpdate(() => {
+      const currentTime = manage.currentTime
+      this.setData({
+        currentTime: this._formatTime(currentTime),
+        percent: currentTime / this.data.currentSong.duration
+      })
+      if (this.data.currentLyric) {
+        this.handleLyric(currentTime * 1000)
+      }
+    })
+  },
+  // 获取歌词
+  _getLyric: function (currentSong) {
+    const _this = this
+    this._getBackPlayfileName().then((res) => {
+      const nowMid = res.ret.split('.')[0].replace('C400', '')
+      if (!(nowMid === currentSong.mid)) {
+        if (this.data.currentLyric) {
+          //this.data.currentLyric.stop && this.data.currentLyric.stop()
+        }
+        _this._getLyricAction(currentSong)
+      }
+    }).catch(() => {
+      _this._getLyricAction(currentSong)
+    })
+  },
+
+  // 去掉歌词中的转义字符
+  _normalizeLyric: function (lyric) {
+    return lyric.replace(/&#58;/g, ':').replace(/&#10;/g, '\n').replace(/&#46;/g, '.').replace(/&#32;/g, ' ').replace(/&#45;/g, '-').replace(/&#40;/g, '(').replace(/&#41;/g, ')')
+  },
+  // 歌词滚动回调函数
+  handleLyric: function (currentTime) {
+    let lines = [{time: 0, txt: ''}], lyric = this.data.currentLyric, lineNum
+    lines = lines.concat(lyric.lines)
+    for (let i = 0; i < lines.length; i++) {
+      if (i < lines.length - 1) {
+        let time1 = lines[i].time, time2 = lines[i + 1].time
+        if (currentTime > time1 && currentTime < time2) {
+          lineNum = i - 1
+          break;
+        }
+      } else {
+        lineNum = lines.length - 2
+      }
+    }
+    this.setData({
+      currentLineNum: lineNum,
+      currentText: lines[lineNum + 1] && lines[lineNum + 1].txt
+    })
+
+    let toLineNum = lineNum - 5
+    if (lineNum > 5 && toLineNum != this.data.toLineNum) {
+      this.setData({
+        toLineNum: toLineNum
+      })
+    }
+  },
+  _formatTime: function (interval) {
+    interval = interval | 0
+    const minute = interval / 60 | 0
+    const second = this._pad(interval % 60)
+    return `${minute}:${second}`
+  },
+  /*秒前边加0*/
+  _pad(num, n = 2) {
+    let len = num.toString().length
+    while (len < n) {
+      num = '0' + num
+      len++
+    }
+    return num
+  },
+  downLoad:function () {
+   
+    var that = this;
+    console.log(that.data.url);
+    wx.downloadFile({
+      url: that.data.url,
+      success: function (res) {
+        const tempFilePath = res.tempFilePath;
+        console.log(tempFilePath);
+        const FileSystemManager = wx.getFileSystemManager()
+            FileSystemManager.saveFile({//下载成功后保存到本地
+              tempFilePath: res.tempFilePath,
+              filePath: wx.env.USER_DATA_PATH + "/"+that.data.currentSong.songName+'.mp3',
+              success(res2) {
+              console.log(res2)
+              console.log('C:\\Users\\LENOVO\\AppData\\Local\\微信开发者工具\User Data\\1a695ca2de1a85735f93a43fb366c83f\\WeappSimulator\\WeappFileSystem\o6zAJs1aRFVkUcs0x7dLx1WOk5Ik\\wxc0046e8ccf2e6e05\\usr\\'+that.data.currentSong.songName +'.mp3')
+              if (res2.errMsg == 'saveFile:ok') {
+                wx.showToast({
+                  title: '文件保存成功路径C:\\Users\\LENOVO\\AppData\\Local\\微信开发者工具\\User Data\\1a695ca2de1a85735f93a43fb366c83f\\WeappSimulator\\WeappFileSystem\\o6zAJs1aRFVkUcs0x7dLx1WOk5Ik\\wxc0046e8ccf2e6e05\\usr\\'+that.data.currentSong.songName +'.mp3',
+                  icon: 'none'
+                })
+                // uni.showModal({
+                // 	title: '文件保存成功，路径为：',
+                // 	content: res.savedFilePath
+                // })
+              }else{
+                wx.showToast({
+                  title: '文件下载报错了',
+                  icon: 'none'
+                })
+              }
+              },
+              fail() {
+                wx.showToast({
+                title: '文件下载报错了',
+                icon: 'none'
+              })
+              }
+            })
+      },
+      fail: function (err) {
+        console.log('下载失败：', err);
+      },
+    });
+  },
+  onShareAppMessage: function () {
+    return {
+      title: "音乐分享，快来一起听吧",
+      path:`/pages/index/index` 
+    }
+ 
+  },
+  comment:function (e) {
+    console.log(e.detail.value);
+    this.setData({
+      context:e.detail.value
+    })
+  }
+,saveComment:function () {
+  var that = this;
+  if(!app.isLogin){
+    wx.navigateTo({
+      url: '/pages/login/login'
+    })
+  }else{
+    var context = this.data.context;
+    if("" == context){
+      wx.showToast({
+        title: '请输入评论内容！',
+        icon: 'none',
+        duration: 1500
+      })
+    }
+  wx.request({
+    url: saveCommentUrl+"?songId="+ app.songlist[app.currentIndex].songId+"&userId="+app.userId+"&context="+context,
+    method: 'get',
+    success: function (res,statusCode,header,cookies,profile) {
+      if (res.data.success) {
+        wx.showToast({
+          title: '评论成功！',
+          icon: 'none',
+          duration: 1500
+        })
+        getComment(that);
+        console.log("check"+res.data.data);
+        that.setData({
+          context:""
+        })
+     
+      } 
+    }
+  })
+}
+},
+  favorite:function () {
+    var _this =  this;
+    if(!app.isLogin){
+      wx.navigateTo({
+        url: '/pages/login/login'
+      })
+    }else{
+      wx.request({
+        url: favoriteUrl+"?songId="+ app.songlist[app.currentIndex].songId+"&userId="+app.userId,
+        method: 'get',
+        success: function (res,statusCode,header,cookies,profile) {
+          if (res.data.success) {
+            wx.showToast({
+              title: '收藏或取消成功！',
+              icon: 'none',
+              duration: 1500
+            })
+            console.log("check"+res.data.data);
+            _this.setData({
+              favorite:res.data.data,
+              
+            })  
+         
+          } 
+        }
+      })
+    }
+
+
+
+    
+
+  },
+  changeMod: function () {
+    let playMod = this.data.playMod + 1
+    if (playMod > SINGLE_CYCLE_MOD) {
+      playMod = SEQUENCE_MODE
+    }
+    this.setData({
+      playMod: playMod
+    })
+  },
+  prev: function () {
+    app.currentIndex = this.getNextIndex(false)
+    this._init()
+  },
+  next: function () {
+    app.currentIndex = this.getNextIndex(true)
+    this._init()
+  },
+  /**
+   * 获取不同播放模式下的下一曲索引
+   * @param nextFlag: next or prev
+   * @returns currentIndex
+   */
+  getNextIndex: function (nextFlag) {
+    let ret,
+        currentIndex = app.currentIndex,
+        mod = this.data.playMod,
+        len = this.data.songslist.length
+    if (mod === RANDOM_MOD) {
+      ret = util.randomNum(len)
+    } else {
+      if (nextFlag) {
+        ret = currentIndex + 1 == len ? 0 : currentIndex + 1
+      } else {
+        ret = currentIndex - 1 < 0 ? len - 1 : currentIndex - 1
+      }
+    }
+    return ret
+  },
+  togglePlaying: function () {
+    wx.getBackgroundAudioPlayerState({
+      success: function (res) {
+        var status = res.status
+        if (status == 1) {
+          wx.pauseBackgroundAudio()
+        } else {
+          wx.playBackgroundAudio()
+        }
+      }
+    })
+  },
+  openList: function () {
+    if (!this.data.songslist.length) {
+      return
+    }
+    this.setData({
+      translateCls: 'uptranslate'
+    })
+  },
+  close: function () {
+    this.setData({
+      translateCls: 'downtranslate'
+    })
+  },
+  playthis: function (e) {
+    const index = e.currentTarget.dataset.index
+    app.currentIndex = index
+    this._init()
+    this.close()
+  },
+  changeDot: function (e) {
+    this.setData({
+      currentDot: e.detail.current
+    })
+  }
+})
+
+
+function getComment(that){
+  wx.request({
+    url: getCommentUrl+"?songId="+ app.songlist[app.currentIndex].songId,
+    method: 'get',
+    success: function (res,statusCode,header,cookies,profile) {
+      if (res.data.success) {
+        console.log("check"+res.data.data);
+        that.setData({
+          commentList:res.data.data
+        })
+     
+      } 
+    }
+  })
+}
+
+{
+  "usingComponents": {
+    "song-list": "../components/song-list/song-list",
+    "progress-bar": "../components/progress/progress"
+  }
+}
+<view>
+  <view class="player" v-show="playlist.length>0">
+    <view class="normal-player" wx:if="fullScreen">
+      <view class="background">
+        <image src="{{currentSong.image}}" style="width: 100%"/>
+      </view>
+      <view class="top">
+        <view class="title">{{currentSong.songName || '暂无正在播放歌曲'}}</view>
+        <view class="subtitle">{{currentSong.singerName}}</view>
+      </view>
+      <swiper class="middle" style="height: 700rpx" bindchange="changeDot">
+        <swiper-item class="middle-l" style="overflow: visible">
+          <view class="cd-wrapper" ref="cdWrapper">
+            <view class="cd {{cdCls}}">
+              <image src="{{image}}" alt="" class="image"/>
+            </view>
+          </view>
+          <view class="currentLyricWrapper">{{mark}}</view>
+        </swiper-item>
+        <swiper-item class="middle-r">
+          <scroll-view class="lyric-wrapper" scroll-y scroll-into-view="line{{toLineNum}}" scroll-with-animation>
+            <view v-if="currentLyric">
+              <view ref="lyricLine"
+                    id="line{{index}}"
+                    class="text {{currentLineNum == index ? 'current': '' }}"
+                    wx:for="{{currentLyric.lines}}">{{currentText}}
+              </view>
+            </view>
+            <view wx:if="{{!currentLyric}}">
+            
+              <view class="pro-box"  wx:for="{{commentList}}">
+        <view class="head" >
+          <image class="img" src="{{item.user.pic}}" mode="aspectFit"></image>
+          <view class="box">
+            <view class="shead clear">
+              <view class="names ">{{item.user.name}}    
+               
+              </view>
+            
+            </view>
+            <view class="shead clear">
+              <view class="names "> {{item.time}}   
+               
+              </view>
+            
+            </view>
+            <br/><br/><br/><br/>
+          
+          </view>
+        </view>
+        <view class="addr-info">
+          <view class="names1 ">
+            {{item.context}}
+          </view>
+        </view>
+      </view>
+    
+     </view>
+    <view style="height:90rpx"></view>
+  <form bindsubmit="submitForm" report-submit="true">
+  <view class="release">
+   
+    <view class="replyinfo2">
+      <textarea placeholder-class="input_null"   bindinput="comment"    value="{{context}}"        fixed="true" maxlength="-1" show-confirm-bar="false" cursor-spacing="15" auto-height="true" placeholder="请输入回复" name="comment"></textarea>
+      <button bindtap="saveComment" class="submit">发送</button>
+    </view>
+  </view>
+</form>
+
+          </scroll-view>
+        </swiper-item>
+      </swiper>
+      <view class="dots-wrapper">
+        <view class="dots {{currentDot==index?'current':''}}" wx:for="{{dotsArray}}"></view>
+      </view>
+      <view class="bottom">
+        <view class="progress-wrapper">
+          <text class="time time-l">{{currentTime}}</text>
+          <view class="progress-bar-wrapper">
+            <progress-bar percent="{{percent}}"></progress-bar>
+          </view>
+          <text class="time time-r">{{duration}}</text>
+        </view>
+        <view class="operators">
+          <view class="icon i-left">
+            <i bindtap="changeMod"
+               class="{{playMod==1? 'icon-sequence':''}}{{playMod==2? ' icon-random':''}}{{playMod==3?' icon-loop':''}}"></i>
+          </view>
+          <view class="icon i-left">
+            <i class="icon-prev" bindtap="prev"></i>
+          </view>
+          <view class="icon i-center">
+            <i class="{{playIcon}}" bindtap="togglePlaying"></i>
+          </view>
+          <view class="icon i-right">
+            <i class="icon-next" bindtap="next"></i>
+          </view>
+          <view class="icon i-right" bindtap="favorite">
+            <i  wx:if="{{favorite==false}}" class="icon-not-favorite"></i>
+            <i   wx:else class="icon-favorite"></i>
+          </view>
+          
+           <view class="icon i-right" open-type="share" >
+            <button  class="button-hover" open-type="share" style="  top: 0;bottom: 0;margin: auto;background-size: 60rpx 60rpx;background-repeat:no-repeat;border:none;width:60rpx;height:60rpx;background-image:url(../../static/image/share.png);" plain='true' ></button>
+       
+        
+          </view>
+          <view class="icon i-right" bindtap="downLoad">
+            <image  src="../../static/image/dowload.png"   style="width:60rpx;height:60rpx"      ></image>
+          </view>
+          <view class="icon i-right" bindtap="openList">
+            <i class="icon-playlist"></i>
+          </view>
+        </view>
+      </view>
+    </view>
+    <view class="content-wrapper {{translateCls}}">
+      <view class="close-list"  bindtap="close"></view>
+      <view class="play-content">
+        <view class="plyer-list-title">播放队列({{songslist.length}}首)</view>
+        <scroll-view class="playlist-wrapper" scroll-y scroll-into-view="list{{currentIndex}}">
+          <view class="item {{index==currentIndex ? 'playing':''}}" wx:for="{{songslist}}" id="list{{index}}"
+                data-index="{{index}}" bindtap="playthis" wx:key="{{index}}">
+            <view class="name">{{item.songName}}</view>
+            <view class="play_list__line">-</view>
+            <view class="singer">{{item.singerName}}</view>
+            <image class="playing-img" wx:if="{{index==currentIndex}}" src="./playing.gif"/>
+          </view>
+        </scroll-view>
+        <view class="close-playlist" bindtap="close">关闭</view>
+      </view>
+    </view>
+  </view>
+</view>
+.player .normal-player {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 150;
+    background: #222;
+}
+.button-hover {
+    background-color:transparent!important;
+}
+button::after{ 
+    border: none; 
+}
+.names {
+    display: flex;
+    font-size: 30rpx;
+    color: black;
+    line-height: 40rpx;
+  }
+  .names1 {
+    display: flex;
+    font-size: 30rpx;
+    margin-left: 40rpx;
+    color: black;
+    line-height: 40rpx;
+  }
+
+  .input_null {
+    color: #c9c9c9;
+  }
+   
+  .replyAll {
+    position:absolute;
+  }
+   
+  .release {
+    align-items: flex-end; /*底部对齐*/
+    box-sizing: border-box;
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    padding: 18rpx 0 18rpx 30rpx;
+    background-color: #f7f8f7;
+    font-size: 28rpx;
+    z-index: 999;
+  }
+   
+  .replyinfo1{ 
+    display: flex;
+    justify-content: space-between; /*两端对齐*/
+    font-size: 35rpx;
+  }
+  .replyinfo2{ 
+    display: flex;
+    justify-content: space-between; /*两端对齐*/
+  }
+   .img{
+    width: 50px;
+    height: 50px;
+   }
+  .release textarea {
+    width: 550rpx;
+    min-height: 34rpx;
+    max-height: 102rpx; /*最多显示三行*/
+    border-width: 15rpx 20rpx; /*使用padding与预期留白不一致，故使用border*/
+    border-style: solid;
+    border-color: #fff;
+    color:black;
+    line-height: 34rpx;
+    font-size: 28rpx;
+    background-color: #fff;
+    border-radius: 4rpx;
+  }
+   
+  .release .text {
+    font-size: 40rpx;
+    color: #c9c9c9;
+  }
+   
+  .cancel {
+    width: 240rpx;
+    height: 64rpx;
+    line-height: 64rpx;
+    text-align: center;
+    color: #6c0;
+    margin: 0 3px;
+    padding: 0;
+  }
+   
+  .release .submit {
+    width: 120rpx;
+    height: 64rpx;
+    line-height: 64rpx;
+    text-align: center;
+    color: #6c0;
+    margin: 0 3px;
+    padding: 0;
+  }
+   
+  .pro-box .info .text .delete {
+    color: #f68135;
+    border-radius: 50rpx;
+    border: 1px solid #f68135;
+    font-size: 28 rpx;
+    width: 150rpx;
+    height: 48rpx;
+    text-align: center;
+  }
+
+.player .normal-player .background {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.6;
+    -webkit-filter: blur(40rpx);
+    filter: blur(40rpx);
+}
+.player .normal-player .top {
+    position: relative;
+    margin-bottom: 50rpx;
+}
+.player .normal-player .top .title {
+    width: 70%;
+    margin: 0 auto;
+    line-height: 80rpx;
+    text-align: center;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 36rpx;
+    color: #fff;
+}
+.player .normal-player .top .subtitle {
+    line-height: 40rpx;
+    text-align: center;
+    font-size: 28rpx;
+    color: #fff;
+}
+.player .normal-player .middle {
+    position: fixed;
+    width: 100%;
+    top: 160rpx;
+    bottom: 300rpx;
+    white-space: nowrap;
+    font-size: 0;
+}
+.player .normal-player .middle .middle-l {
+    display: inline-block;
+    vertical-align: top;
+    position: relative;
+    width: 100%;
+    height: 0!important;
+    padding-top: 80%!important;
+}
+.player .normal-player .middle .middle-l .cd-wrapper {
+    position: absolute;
+    left: 15%;
+    top: 0;
+    width: 70%;
+    height: 90%;
+}
+.player .normal-player .middle .middle-l .cd-wrapper .play {
+    -webkit-animation-play-state: running !important;
+    animation-play-state: running !important;
+}
+.player .normal-player .middle .middle-l .cd-wrapper .pause {
+    -webkit-animation-play-state: paused!important;
+    animation-play-state: paused!important;
+}
+.player .normal-player .middle .middle-l .cd-wrapper .cd {
+  width: 100%;
+  height: 100%;
+  border: 10rpx solid rgba(255,255,255,0.1);
+  border-radius: 50%;
+    -webkit-animation: rotate 20s linear infinite;
+    animation: rotate 20s linear infinite;
+}
+.player .normal-player .middle .middle-l .cd-wrapper .cd .image {
+    position: absolute;
+    left: 0rpx;
+    top: 0rpx;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+}
+.player .normal-player .bottom {
+    position: absolute;
+    bottom: 50rpx;
+    width: 100%;
+}
+.player .normal-player .bottom .progress-wrapper {
+    display: -webkit-box;
+    display: -ms-flexbox;
+    display: flex;
+    -webkit-box-align: center;
+    -ms-flex-align: center;
+    align-items: center;
+    width: 80%;
+    margin: 0rpx auto;
+    padding: 20rpx 0;
+}
+.player .normal-player .bottom .progress-wrapper .time.time-l {
+    text-align: left;
+}
+.player .normal-player .bottom .progress-wrapper .time.time-r {
+    text-align: right;
+}
+.player .normal-player .bottom .progress-wrapper .time {
+  color: #fff;
+  font-size: 24rpx;
+  -webkit-box-flex: 0;
+  -ms-flex: 0 0 60rpx;
+  flex: 0 0 60rpx;
+  line-height: 60rpx;
+  width: 60rpx;
+}
+.player .normal-player .bottom .operators {
+    display: -webkit-box;
+    display: -ms-flexbox;
+    display: flex;
+    -webkit-box-align: center;
+    -ms-flex-align: center;
+    align-items: center;
+}
+.player .normal-player .bottom .operators .icon {
+    -webkit-box-flex: 1;
+    -ms-flex: 1;
+    flex: 1;
+    color: #ffcd32;
+}
+.player .normal-player .bottom .operators .i-left {
+    text-align: right;
+}
+.player .normal-player .bottom .operators .icon i {
+    font-size: 60rpx;
+}
+.player .normal-player .bottom .operators .i-center {
+    padding: 0 40rpx;
+    text-align: center;
+}
+.player .normal-player .bottom .operators .i-right {
+    text-align: left;
+}
+.player .normal-player .top .back .icon-back {
+    display: block;
+    padding: 18rpx;
+    font-size: 44rpx;
+    color: #ffcd32;
+    -webkit-transform: rotate(-90deg);
+    transform: rotate(-90deg);
+}
+.content-wrapper {
+    position: fixed;
+    top: 100%;
+    height: 100%;
+    width: 100%;
+    z-index: 150;
+    transition: all 0.5s;
+}
+.close-list {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: 100%;
+}
+.playlist-wrapper {
+    height: 660rpx;
+    width: 100%;
+    padding:15rpx 30rpx;
+    box-sizing: border-box;
+}
+.playlist-wrapper .item {
+    display: flex;
+    position: relative;
+    height: 90rpx;
+    line-height: 90rpx;
+    margin-left: 30rpx;
+    padding-right: 30rpx;
+    border-bottom: 1rpx dashed rgba(255,255,255,.3);
+}
+.playlist-wrapper .playing ,.playlist-wrapper .playing .singer, .playlist-wrapper .playing .play_list__line{
+    color: #ff9900!important;
+}
+
+.playlist-wrapper .item .name {
+    max-width:350rpx;
+    overflow:hidden;
+    white-space:nowrap;
+    text-overflow:ellipsis;
+    font-size: 14px;
+}
+.playlist-wrapper .item .play_list__line {
+    display: block;
+    margin: 0 5px;
+    color: rgba(255,255,255,.5);
+}
+.playlist-wrapper .item .singer {
+    max-width:200rpx;
+    overflow:hidden;
+    white-space:nowrap;
+    text-overflow:ellipsis;
+    font-size: 12px;
+    color: rgba(255,255,255,.5);
+}
+.playlist-wrapper .item .playing-img {
+    width: 24rpx;
+    height: 24rpx;
+    position: absolute;
+    top: 32rpx;
+    right: 0;
+}
+.play-content {
+    position: absolute;
+    /*//bottom: -860rpx;*/
+    bottom: 0;
+    /*transform: translateY(860rpx);*/
+    left: 0;
+    right: 0;
+    height: 860rpx;
+    width: 100%;
+    background: rgba(0,0,0,.9);
+    z-index: 200;
+    transition: all 0.5s;
+}
+.uptranslate {
+    transform: translateY(-100%)!important;
+}
+.downtranslate {
+    transform: translateY(100%)!important;
+}
+.close-playlist {
+    height: 100rpx;
+    width: 100%;
+    text-align: center;
+    line-height: 100rpx;
+    border-top: 1px solid rgba(255,255,255,.3);
+    font-size: 16px;
+}
+.plyer-list-title{
+    height: 100rpx;
+    width: 100%;
+    text-align: center;
+    line-height: 100rpx;
+    border-bottom: 1px solid rgba(255,255,255,.3);
+    font-size: 16px;
+}
+.player .normal-player .bottom .progress-wrapper .progress-bar-wrapper {
+    -webkit-box-flex: 1;
+    -ms-flex: 1;
+    flex: 1;
+}
+@keyframes rotate{
+    0% {
+        transform: rotate(0)
+    }
+    100% {
+        transform: rotate(360deg)
+    }
+}
+
+.middle-r {
+    display: inline-block;
+    vertical-align: top;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+.lyric-wrapper{
+    width: 80%;
+    margin: 0 auto;
+    overflow: hidden;
+    text-align: center;
+    height: 100%;
+}
+.text{
+    line-height: 32px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 14px;
+}
+.current {
+    color: #ffcd32;
+}
+.currentLyricWrapper {
+    height:70rpx;
+    font-size:12px;
+    position:absolute;
+    bottom:-80rpx;
+    line-height: 70rpx;
+    text-align: center;
+    width: 100%;
+    color: #ffcd32;
+}
+.dots-wrapper {
+    position: absolute;
+    bottom: 210rpx;
+    height: 20rpx;
+    line-height: 20rpx;
+    text-align: center;
+    width: 100%;
+}
+.dots-wrapper .dots {
+    width: 20rpx;
+    height: 20rpx;
+    border-radius: 10rpx;
+    background: rgba(255, 255, 255, 0.5);
+    display: inline-block;
+    margin: 10rpx;
+    margin-top: 0;
+}
+.dots-wrapper .current {
+    width: 40rpx;
+    background: rgba(255,255,255,.8);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 200rpx 0;
+    box-sizing: border-box;
+  } 
+  /* large button style */
+  .large-btn{
+      background: #f68135;
+      border-radius: 50rpx;
+      border: 1px solid #f68135;
+      color: #fff;
+      height: 100rpx;
+      line-height: 100rpx;
+      margin: 0 auto;
+      width: 96%;
+      text-align: center;
+  }
+  .large-btn.empty{
+      background: transparent;
+      color: #f68135;
+    margin-top: 50rpx;
+  }
+  .large-btn.disabled{
+      border-color: #ccc;
+      background: #ccc;
+      color: #fff;
+  }
+  /* public style to clear default styles */
+  .fl{
+      float: left;
+  }
+  .fr{
+      float: right;
+  }
+  .fc{
+    float:none;
+  }
+  .col-gray{
+      color: #999!important;
+  }
+   
+   
+  /* the message of auction about goods & cars */
+  .pro-con{
+      padding: 20rpx;
+      background: #f1f1f1;
+  }
+  .pro-box{
+      background: #fff;
+      padding: 20rpx;
+      box-sizing: border-box;
+      border-radius: 10rpx;
+      margin-bottom: 20rpx;
+  }
+  .pro-box .img{
+      display: inline-block;
+      vertical-align: top;
+      width: 80rpx;
+      height: 80rpx;
+      border-radius: 50%;
+      overflow: hidden;
+      margin-right: 10rpx;
+  }
+  .pro-box .box{
+      display: inline-block;
+      vertical-align: top;
+      width: calc(98% - 80rpx);
+  }
+  .pro-box .shead{
+      padding-bottom: 20rpx;
+  }
+  .pro-box .shead .name{
+      font-size: 30rpx;
+      line-height: 40rpx;
+  }
+  .pro-box .shead .stxt{
+      font-size: 26rpx;
+      color: #999;
+  }
+  .pro-box .shead .fr{
+      padding-top: 10rpx;
+  }
+  .pro-box .shead .fr navigator{
+      font-size: 0;
+  }
+  .pro-box .shead .fr image{
+      width: 48rpx;
+      height: 48rpx;
+  }
+   .pro-box .sharebtn{
+     height:48rpx;
+       background: #f68135;
+     border-radius: 50rpx;
+     border: 1px solid #f68135;
+     color: #fff;
+     text-align: center;
+     line-height: 50rpx;
+     font-size:30rpx;
+  } 
+   
+  .pro-box .addr-info{
+    margin-left: 10rpx;
+      margin: 0 -20rpx;
+      margin-bottom: 20rpx;
+      padding-bottom: 20rpx;
+  }
+   
+  .pro-box .addr-info .addr-text{
+      font-size: 35rpx;
+      line-height: 40rpx;
+      color: black;
+    width:100%;
+  }
+   .pro-box .addr-info .addr-text .color1{
+    color:lightskyblue;
+    border-color: #ccc;
+    border: 1px solid lightskyblue;
+    border-radius:15px;
+    margin-right: 5px;
+    padding: 0rpx,2rpx,0rpx,2rpx;
+  } 
+  .pro-box .addr-info .addr-text .color2{
+    color: #f68135;
+    border-color: #ccc;
+    border: 1px solid #f68135;
+    border-radius:10px;
+    margin-right: 5px;
+    margin-left: 5px;
+    padding: 0rpx,2rpx,0rpx,2rpx;
+  } 
+   
+  .pro-box .position{
+      width: 48rpx;
+      height: 48rpx;
+  } 
+   
+  .pro-box .comment{
+      width: 55rpx;
+      height: 48rpx;
+  } 
+   
+  .pro-box .addr{
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px dashed #ccc;
+      margin: 0 -20rpx;
+      margin-bottom: 20rpx;
+      padding-bottom: 20rpx;
+      padding-left: 20rpx;
+      padding-right: 20rpx;
+    display: flex;
+  }
+   
+  .pro-box .addr .addr-text{
+      font-size: 34rpx;
+      line-height: 40rpx;
+      max-width: 240rpx;
+      min-width:200rpx;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+  }
+  .pro-box .addr .addr-text .color-text{
+    color: #f68135;
+  }
+  .pro-box .addr .time{
+      font-size: 26rpx;
+      line-height: 36rpx;
+      text-align: center;
+  }
+  .pro-box .addr .line{
+      background: #ccc;
+      height: 1px;
+      margin: 6rpx -20rpx;
+      position: relative;
+  }
+  .pro-box .info{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+  }
+  .pro-box .info .text{
+    vertical-align:text-top;
+      font-size: 26rpx;
+  }
+  .pro-box .info .text .delete{
+    color: #f68135;
+      border-radius: 50rpx;
+      border: 1px solid #f68135;
+      width: 100rpx;
+      height: 48rpx;
+      text-align: center;
+  }
