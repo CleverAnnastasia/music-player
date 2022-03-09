@@ -1,0 +1,86 @@
+Component({
+  data: {
+    width: 0
+  },
+  properties: {
+    percent: {
+      value: 0,
+      type: Number,
+      observer: function (oldVal, newVal) {
+        //console.log(newVal)
+        this.updateProgress(newVal)
+      }
+    }
+  },
+  ready: function () {
+    wx.createSelectorQuery().in(this).select('#progressBar').boundingClientRect(function (rect) {
+      rect.width   // 节点的宽度
+    }).exec((res) => {
+      this.setData({
+        barWidth: res[0].width
+      })
+    })
+  },
+  methods: {
+    updateProgress: function (percent) {
+      const barWidth = this.data.barWidth
+      this.setData({
+        width: barWidth * percent
+      })
+    }
+  }
+})
+{
+  "component": true
+}
+<view class="progress-bar" id="progressBar" click="progressClick">
+  <view class="bar-inner">
+    <view class="progress" ref="progress" style="width: {{width}}px"></view>
+    <!--<view class="progress-btn-wrapper" ref="progressBtn"
+         touchstart="progressTouchStart"
+         touchmove="progressTouchMove"
+         touchend="progressTouchEnd">
+        <view class="progress-btn" style="transform: translate3d({{width}}px,0,0)"></view>
+    </view>-->
+    </view>
+</view>
+
+.progress-bar {
+    height: 30px;
+}
+.progress-bar .bar-inner {
+    position: relative;
+    top: 13px;
+    height: 4px;
+    background: rgba(0,0,0,0.3);
+}
+.progress-bar .bar-inner {
+    position: relative;
+    top: 13px;
+    height: 4px;
+    background: rgba(0,0,0,0.3);
+}
+.progress-bar .bar-inner .progress {
+    position: absolute;
+    height: 100%;
+    background: #ffcd32;
+}
+.progress-bar .bar-inner .progress-btn-wrapper {
+    position: absolute;
+    left: -8px;
+    top: -13px;
+    width: 30px;
+    height: 30px;
+}
+.progress-bar .bar-inner .progress-btn-wrapper .progress-btn {
+    position: relative;
+    top: 7px;
+    left: 7px;
+    -webkit-box-sizing: border-box;
+    box-sizing: border-box;
+    width: 16px;
+    height: 16px;
+    border: 3px solid #fff;
+    border-radius: 50%;
+    background: #ffcd32;
+}
