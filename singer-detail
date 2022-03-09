@@ -1,0 +1,61 @@
+const app = getApp()
+const song = require('../../utils/song.js')
+const api = require('../../utils/api.js')
+var apiUrl = app.globalData.apiUrl +"api/getSingerDetail";
+
+Page({
+  data: {
+    songs: []
+  },
+  onLoad: function () {
+    this.setData({
+      title: app.globalData.selectsinger.name,
+      image: app.globalData.selectsinger.avatar
+    })
+console.log(app.globalData.selectsinger.id);
+    this.getSingerDetail(app.globalData.selectsinger.id)
+    app.globalData.fromSinger = false
+
+  },
+  getSingerDetail: function (singermid, startIndex = 0) {
+    const _that = this
+    wx.request({
+      url: apiUrl+"?singerId="+singermid,
+      data: {
+      
+      },
+      success: function (res) {
+        if (res.data.success) {
+          console.log(res.data.data);
+            _that.setData({
+              songs: res.data.data
+            })
+        }
+      }
+    })
+
+
+  },
+  _normallizeSongs: function (list) {
+    let ret = []
+    list.forEach((item) => {
+      let {musicData} = item
+      if (musicData.songid && musicData.albummid) {
+        ret.push(song.createSong(musicData))
+      }
+    })
+    return ret
+  },
+  /*上拉加载更多歌曲*/
+  childEvent: function (e) {
+    this.getSingerDetail(app.globalData.selectsinger.id, e.detail)
+  }
+})
+{
+  "usingComponents": {
+    "music-list": "../components/music-list/music-list"
+  }
+}
+<view>
+  <music-list title="{{title}}" image="{{image}}" songs="{{songs}}" bindmyevent="childEvent"></music-list>
+</view>
