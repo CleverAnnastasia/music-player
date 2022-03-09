@@ -1,0 +1,34 @@
+{
+  "navigationBarTitleText": "查看启动日志"
+}
+<!--logs.wxml-->
+<scroll-view class="container log-list" scroll-y>
+  <view wx:for="{{logs}}" wx:for-item="log" wx:key="log">
+    <text class="log-item">{{index + 1}}. {{log}}</text>
+  </view>
+</scroll-view>
+
+.log-list {
+  display: flex;
+  flex-direction: column;
+  padding: 40rpx;
+}
+.log-item {
+  margin: 10rpx;
+}
+
+//logs.js
+const util = require('../../utils/util.js')
+
+Page({
+  data: {
+    logs: []
+  },
+  onLoad: function () {
+    this.setData({
+      logs: (wx.getStorageSync('logs') || []).map(log => {
+        return util.formatTime(new Date(log))
+      })
+    })
+  }
+})
