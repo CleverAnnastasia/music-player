@@ -1,0 +1,299 @@
+const api = require('../../utils/api.js')
+const songs = require('../../utils/song.js')
+const app = getApp().globalData
+var apiUrl = app.apiUrl +"api/searchMusic";
+Page({
+  data: {
+    hotSearch: [],
+    result: false
+  },
+  onLoad: function () {
+    //this._getHotSearch()
+    this.dealHistroySearch()
+  },
+  _getHotSearch: function () {
+    api.getHotSearch().then((res) => {
+      let res1 = res.data.replace('hotSearchKeysmod_top_search(', '')
+      let res2 = JSON.parse(res1.substring(0, res1.length - 1))
+      if (res2.code === 0) {
+        let hotArr = res2.data.hotkey
+        this.setData({
+          hotSearch: hotArr.length > 10 ? hotArr.slice(0, 10) : hotArr
+        })
+      }
+    }).catch((err) => {
+      console.log(err)
+    })
+  },
+  searchAction: function (event) {
+    const _this = this
+    const keyWrod = event.detail.value || event.currentTarget.dataset.txt
+    wx.request({
+      url: apiUrl+"?name="+keyWrod,
+      method: 'get',
+      success: function (res,statusCode,header,cookies,profile) {
+        if (res.data.success) {
+          _this.dealData(res.data.data)
+          _this.dealHistroySearch(keyWrod)
+
+      
+        } 
+      }
+    })
+
+
+  },
+  dealData: function (data) {
+    if (data) {
+      this.setData({
+        result: true
+      })
+      data.singers ? this.setData({
+        singers: data.singers
+      }) : this.setData({
+        singers: []
+      })
+      data.songs ? this.setData({
+        songs: data.songs
+      }) : this.setData({
+        songs: []
+      })
+    } else {
+      this.setData({
+        result: false
+      })
+    }
+  },
+  dealHistroySearch: function (keyWrod) {
+    let histroy
+    try {
+      let local = wx.getStorageSync('histroySearch')
+      if (local) {
+        histroy = local
+        if (keyWrod && local.indexOf(keyWrod) < 0) {
+          local.push(keyWrod)
+          wx.setStorage({
+            key: "histroySearch",
+            data: local
+          })
+        }
+      } else {
+        if (keyWrod) {
+          histroy = [keyWrod]
+          wx.setStorage({
+            key: "histroySearch",
+            data: [keyWrod]
+          })
+        }
+      }
+    } catch (e) {
+      console.log(e)
+    }
+    this.setData({
+      histroySearch: histroy.reverse()
+    })
+  },
+  deleteHistroySearch: function (event) {
+    const keyWord = event.currentTarget.dataset.txt
+    if (keyWord) {
+      let local = wx.getStorageSync('histroySearch')
+      let index = local.indexOf(keyWord)
+      local.splice(index, 1)
+      wx.setStorageSync('histroySearch', local)
+    } else {
+      wx.removeStorageSync('histroySearch')
+    }
+    this.setData({
+      histroySearch: wx.getStorageSync('histroySearch')
+    })
+  },
+  goSinger: function (event) {
+    const detail = event.currentTarget.dataset
+    app.selectsinger = {}
+    app.selectsinger.id = detail.id
+    app.selectsinger.avatar = detail.pic
+    app.selectsinger.name = detail.name
+    wx.navigateTo({
+      url: '/pages/singer-detail/singer-detail'
+    })
+  },
+  selectSong: function (event) {
+    const mid = event.currentTarget.dataset.mid
+    const data = event.currentTarget.dataset.data
+    let song = {
+      songId: data.songId,
+      mid: data.songId,
+      singerName: data.singerName,
+      songName: data.name,
+      album: data.mark,
+      duration: data.duration,
+      image: data.pic,
+      musicId: data.songId
+    }
+    app.type = 1
+    app.songlist = [song]
+    app.currentIndex = 0
+    wx.switchTab({
+      url: '/pages/player/player'
+    })
+  }
+})
+{
+  "navigationBarTitleText": "搜索"
+}
+<view class="search-page">
+  <view class="search-wrapper">
+    <input class="search" placeholder="输入歌手名、歌曲名搜索"
+           placeholder-style="color: #ffcd32;" auto-focus
+           placeholder-class="placeholder"
+           confirm-type="search"
+           bindconfirm="searchAction"
+           bindinput="searchAction"/>
+    <view class="button">搜索</view>
+  </view>
+  <view class="main">
+    <!-- <view class="hot-wrapper">
+      <view class="title">热门搜索: </view>
+      <view class="hot-details">
+        <view class="item" wx:for="{{hotSearch}}" wx:key="{{index}}"
+              bindtap="searchAction" data-txt="{{item.k}}">{{item.k}}</view>
+      </view>
+    </view> -->
+    <view class="histroy">
+      <view class="title">历史搜索: </view>
+      <scroll-view class="histroy-wrapper" scroll-y>
+        <view class="item" wx:for="{{histroySearch}}" wx:key="{{index}}"
+              bindtap="searchAction" data-txt="{{item}}">
+          <view class="txt">{{item}}</view>
+          <view class="x" catchtap="deleteHistroySearch" data-txt="{{item}}">X</view>
+        </view>
+      </scroll-view>
+      <view class="clear" catchtap="deleteHistroySearch" wx:if="{{histroySearch.length>0}}">
+        <i class="icon-clear"></i>
+        清空搜搜历史
+      </view>
+    </view>
+  </view>
+  <scroll-view scroll-y class="search-result-wrapper" wx:if="{{result}}">
+    <view class="singer-wrapper">
+      <view class="item" wx:for="{{singers}}"
+            wx:key="{{index}}"
+            data-name="{{item.name}}"
+            data-id="{{item.singerId}}"
+            data-pic="{{item.pic}}"
+            bindtap="goSinger">
+        <image class="image" src="{{item.pic}}"/>
+        {{item.name}}
+      </view>
+    </view>
+    <view class="song-wrapper">
+      <view class="item" wx:for="{{songs}}" data-data="{{item}}" data-mid="{{item.songId}}"
+            bindtap="selectSong">
+        {{item.name}} - {{item.singerName}}
+      </view>
+    </view>
+  </scroll-view>
+</view>
+.search-page {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    font-size: 12px;
+    background: #222;
+}
+.search-wrapper {
+    padding: 10rpx 20rpx;
+    position: relative;
+    display: flex;
+}
+.search-wrapper .search {
+    border-radius: 5px;
+    border: 1px solid #333;
+    padding: 5px;
+    flex: 1;
+}
+.search-wrapper .button {
+    width: 100rpx;
+    height: 70rpx;
+    font-size: 12px;
+    line-height: 60rpx;
+    text-align: center;
+    flex: 0 0 100rpx;
+    color:#ffcd32;
+}
+.placeholder {
+    font-size: 12px;
+    text-align: center;
+}
+.main {
+    padding: 0 30rpx;
+}
+.hot-details {
+    display: flex;
+    flex-wrap: wrap;
+    max-height: 100px;
+    overflow: scroll;
+}
+.hot-details .item{
+    padding: 6rpx 20rpx;
+    border: 1px solid #ffcd32;
+    margin-right: 20rpx;
+    border-radius: 20rpx;
+    margin-top: 10rpx;
+}
+.histroy {
+    margin-top: 30rpx;
+}
+.histroy .title {
+    padding: 10rpx 0;
+}
+.histroy-wrapper{
+    height: 700rpx;
+}
+.histroy-wrapper .item{
+    display: flex;
+    padding: 20rpx 0;
+    border-bottom: 1px solid rgba(255,255,255,.1);
+}
+.histroy-wrapper .item .txt{
+    flex: 1;
+    text-indent: 40rpx;
+}
+.histroy-wrapper .item .x{
+    flex: 0 0 30rpx;
+    padding: 0 20rpx;
+}
+.histroy .clear {
+    width: 250rpx;
+    margin: 0 auto;
+    text-align: center;
+    margin-top: 20rpx;
+    color: #ffcd32;
+}
+.search-result-wrapper {
+    width: 100%;
+    position: fixed;
+    height: 100%;
+    top: 95rpx;
+    background: #222;
+    padding: 0 50rpx;
+    font-size: 13px;
+    color:rgba(255,255,255,0.5);
+}
+.search-result-wrapper .singer-wrapper .item{
+    height: 100rpx;
+    line-height: 100rpx;
+    display: flex;
+    padding: 10rpx 0;
+}
+.search-result-wrapper .singer-wrapper .image{
+    height: 90rpx;
+    width: 90rpx;
+    border-radius: 100%;
+    margin-right: 30rpx;
+}
+.search-result-wrapper .song-wrapper .item {
+    height: 70rpx;
+    line-height: 70rpx;
+}
