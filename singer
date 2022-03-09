@@ -1,0 +1,86 @@
+const HOT_NAME = '热门'
+const HOT_SINGER_LEN = 10
+const app = getApp()
+var apiUrl = app.globalData.apiUrl +"api/getSingerList";
+
+function Singer(name, id,pic) {
+  this.id = id
+  this.name = name
+  this.avatar = pic
+}
+
+Page({
+  onLoad: function () {
+    this.getSingerList()
+  },
+  onHide: function () {
+    app.globalData.fromSinger = true
+  },
+  getSingerList: function () {
+    const _that = this
+    wx.request({
+      url:apiUrl,
+      data: {
+        
+      },
+      success: function (res) {
+        if (res.data.success) {
+          _that.setData({
+            singerlist: _that._normallizeSinger(res.data.data)
+          })
+        }
+      }
+    })
+  },
+  /*组装成需要的歌手列表数据*/
+  _normallizeSinger:function(list) {
+    let map = {
+      hot: {
+        title: HOT_NAME,
+        items: []
+      }
+    }
+    list.forEach((item,index)=>{
+      if(index < HOT_SINGER_LEN) {
+        map.hot.items.push(new Singer(item.name, item.singerId,item.pic))
+      }
+      const key = item.findex
+      if(!map[key]) {
+        map[key] = {
+          title: key,
+          items: []
+        }
+      }
+      map[key].items.push(new Singer(item.name, item.singerId,item.pic))
+    })
+    // 为了得到有序列表,对map做进一步处理
+    let hot = []
+    let ret = []
+    for (let key in map) {
+      var val = map[key]
+      if (val.title.match(/[a-zA-Z]/)) {
+        ret.push(val)
+      } else if(val.title === HOT_NAME) {
+        hot.push(val)
+      }
+    }
+    // 按a-z排序
+    ret.sort((a, b)=>{
+      return a.title.charCodeAt(0) - b.title.charCodeAt(0)
+    })
+    return hot.concat(ret)
+  }
+})
+{
+  "usingComponents": {
+    "list-view": "../components/list-view/list-view"
+  },
+  "navigationBarTitleText": "歌手"
+}
+<view class="singer">
+  <list-view singerlist="{{singerlist}}" class="listview"></list-view>
+</view>
+.singer ,.listview{
+    width: 100%;
+    height: 100%;
+}
