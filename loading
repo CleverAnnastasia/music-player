@@ -1,0 +1,21 @@
+Component({
+
+})
+{
+  "component": true
+}
+<view>
+  <view class="loading">
+    <image style="width: 48rpx;height: 48rpx" src="./loading.gif"/>
+    <view class="desc">数据加载中，请稍后。</view>
+  </view>
+</view>
+.loading{
+    width: 100%;
+    text-align: center;
+}
+.loading .desc {
+    line-height: 20px;
+    font-size: 12px;
+    color: rgba(255,255,255,0.5);
+}
